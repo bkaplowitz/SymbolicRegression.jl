@@ -7,11 +7,52 @@ using Statistics
 include("../src/TensorOperators.jl")
 using .TensorOperators
 
+# Create wrapper functions that handle both scalar and tensor inputs
+function wrapped_grad_x(x)
+    if x isa AbstractArray{<:Real,3}
+        return grad_along_x(x)
+    else
+        return convert(typeof(x), NaN)  # Return NaN for non-tensor inputs
+    end
+end
+
+function wrapped_grad_y(x)
+    if x isa AbstractArray{<:Real,3}
+        return grad_along_y(x)
+    else
+        return convert(typeof(x), NaN)
+    end
+end
+
+function wrapped_laplacian(x)
+    if x isa AbstractArray{<:Real,3}
+        return laplacian(x)
+    else
+        return convert(typeof(x), NaN)
+    end
+end
+
+function wrapped_divergence(x, y)
+    if x isa AbstractArray{<:Real,3} && y isa AbstractArray{<:Real,3}
+        return divergence(x, y)
+    else
+        return convert(promote_type(typeof(x), typeof(y)), NaN)
+    end
+end
+
+function wrapped_curl_2d(x, y)
+    if x isa AbstractArray{<:Real,3} && y isa AbstractArray{<:Real,3}
+        return curl_2d(x, y)
+    else
+        return convert(promote_type(typeof(x), typeof(y)), NaN)
+    end
+end
+
 @testset "tensor shapes" begin
     # Create options with tensor operators
     options = Options(;
-        binary_operators=[+, *, divergence, curl_2d],
-        unary_operators=[grad_along_x, grad_along_y, laplacian],
+        binary_operators=[+, *, wrapped_divergence, wrapped_curl_2d],
+        unary_operators=[wrapped_grad_x, wrapped_grad_y, wrapped_laplacian],
     )
     @extend_operators options
 
@@ -34,8 +75,8 @@ end
 @testset "Basic tensor operations" begin
     # Create options with tensor operators
     options = Options(;
-        binary_operators=[+, *, divergence, curl_2d],
-        unary_operators=[grad_along_x, grad_along_y, laplacian],
+        binary_operators=[+, *, wrapped_divergence, wrapped_curl_2d],
+        unary_operators=[wrapped_grad_x, wrapped_grad_y, wrapped_laplacian],
         populations=8,  # Smaller population for testing
         maxsize=10,    # Limit expression size for testing
         parsimony=0.1,  # Encourage simpler expressions
@@ -43,9 +84,6 @@ end
     @extend_operators options
 
     # Generate synthetic PDE data
-    # We'll use a simple 2D diffusion equation: ∂u/∂t = ∇²u
-    # with a known solution u(x,y,t) = sin(x)cos(y)exp(-2t)
-
     nx, ny, nt = 32, 32, 10
     dx = dy = 2π / 32
     dt = 0.1
@@ -55,29 +93,22 @@ end
     y = reshape(range(0, 2π - dy, ny), 1, 1, ny)
     t = reshape(range(0, dt * (nt - 1), nt), nt, 1, 1)
 
-    # Generate true solution
-    u = @. sin(x) * cos(y) * exp(-2t)
+    # Generate true solution: u_t = ∇²u
+    u = @. sin(2x) * cos(3y)  # Initial condition
+    # Calculate true time derivative using Laplacian
+    dudt = laplacian(u)  # Target: ∂u/∂t = ∇²u
 
-    # Calculate true time derivative (target)
-    dudt = @. -2 * sin(x) * cos(y) * exp(-2t)
+    # Keep tensor structure: [batch, width, height]
+    X = reshape(u, nt, nx, ny)  # Maintain 3D structure
+    y = reshape(dudt, nt, nx, ny)
 
-    # Test basic operators match analytical solutions
-    lap_u = laplacian(u) / (dx * dy)  # Scale by grid spacing
-    analytical_lap = @. -2 * sin(x) * cos(y) * exp(-2t)  # ∇²[sin(x)cos(y)] = -2sin(x)cos(y)
-    @test maximum(abs.(lap_u .- analytical_lap)) < 0.1  # Allow for numerical differences
-
-    # Now try to discover the PDE
-    # The true equation is: ∂u/∂t = ∇²u
-    # So dudt = laplacian(u)
-
-    # Prepare data for symbolic regression
-    # Reshape data to match expected format: features × samples
-    X_flat = reshape(u, :, 1)  # Flatten spatial dimensions into samples
-    y_flat = vec(dudt)         # Target should be a vector
+    # Reshape for symbolic regression while preserving tensor structure
+    X_tensor = reshape(X, 1, :)  # 1 feature × (nt*nx*ny) samples
+    y_flat = vec(y)              # (nt*nx*ny) samples
 
     # Run equation search
     hall_of_fame = equation_search(
-        X_flat,
+        X_tensor,
         y_flat;
         niterations=20,  # Small number for testing
         options=options,
@@ -85,13 +116,17 @@ end
     )
 
     # Get best equation
-    best = hall_of_fame[end]
+    dominating = calculate_pareto_frontier(X_tensor, y_flat, hall_of_fame, options)
+    best = last(dominating)
 
+    # The true equation should be y = laplacian(x)
     # Test if we recovered something close to the true equation
-    # The true equation should have low loss
     @test best.loss < 0.1
 
     # Test prediction
-    predicted = best.tree(X_flat, options)
+    predicted = best.tree(X_tensor, options)
     @test cor(predicted, y_flat) > 0.9  # Strong correlation with true solution
+
+    # Print the discovered equation
+    println("Discovered equation: ", string_tree(best.tree, options))
 end

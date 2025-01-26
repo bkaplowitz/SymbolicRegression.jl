@@ -9,25 +9,45 @@ function roll(x::AbstractArray{T,N}, shift::Int; dims::Int) where {T,N}
     return x[inds...]
 end
 
-# Basic tensor operators with proper type signatures
-function grad_along_x(x::AbstractArray{T,3}) where {T<:Real}
-    return (roll(x, -1; dims=2) .- roll(x, 1; dims=2)) ./ T(2)
+# Basic tensor operators with proper type signatures and default behavior
+function grad_along_x(x)
+    if x isa AbstractArray{<:Real,3}
+        return (roll(x, -1; dims=2) .- roll(x, 1; dims=2)) ./ 2
+    else
+        return convert(typeof(x), NaN)
+    end
 end
 
-function grad_along_y(x::AbstractArray{T,3}) where {T<:Real}
-    return (roll(x, -1; dims=3) .- roll(x, 1; dims=3)) ./ T(2)
+function grad_along_y(x)
+    if x isa AbstractArray{<:Real,3}
+        return (roll(x, -1; dims=3) .- roll(x, 1; dims=3)) ./ 2
+    else
+        return convert(typeof(x), NaN)
+    end
 end
 
-function laplacian(x::AbstractArray{T,3}) where {T<:Real}
-    return grad_along_x(grad_along_x(x)) .+ grad_along_y(grad_along_y(x))
+function laplacian(x)
+    if x isa AbstractArray{<:Real,3}
+        return grad_along_x(grad_along_x(x)) .+ grad_along_y(grad_along_y(x))
+    else
+        return convert(typeof(x), NaN)
+    end
 end
 
-function divergence(fx::AbstractArray{T,3}, fy::AbstractArray{T,3}) where {T<:Real}
-    return grad_along_x(fx) .+ grad_along_y(fy)
+function divergence(fx, fy)
+    if fx isa AbstractArray{<:Real,3} && fy isa AbstractArray{<:Real,3}
+        return grad_along_x(fx) .+ grad_along_y(fy)
+    else
+        return convert(promote_type(typeof(fx), typeof(fy)), NaN)
+    end
 end
 
-function curl_2d(fx::AbstractArray{T,3}, fy::AbstractArray{T,3}) where {T<:Real}
-    return grad_along_x(fy) .- grad_along_y(fx)
+function curl_2d(fx, fy)
+    if fx isa AbstractArray{<:Real,3} && fy isa AbstractArray{<:Real,3}
+        return grad_along_x(fy) .- grad_along_y(fx)
+    else
+        return convert(promote_type(typeof(fx), typeof(fy)), NaN)
+    end
 end
 
 # Export the operators
