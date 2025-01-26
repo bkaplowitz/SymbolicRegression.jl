@@ -81,7 +81,7 @@ end
         y_flat;
         niterations=20,  # Small number for testing
         options=options,
-        parallelism=:none,  # For testing
+        parallelism=:serial,
     )
 
     # Get best equation
